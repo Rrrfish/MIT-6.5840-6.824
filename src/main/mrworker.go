@@ -24,11 +24,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: mrworker xxx.so\n")
 		os.Exit(1)
 	}
-	fmt.Println("[test]load map reduce func!")
+
 	mapf, reducef := loadPlugin(os.Args[1])
 
 	mr.Worker(mapf, reducef)
-	fmt.Println("[test]start worker!")
 }
 
 // load the application Map and Reduce functions

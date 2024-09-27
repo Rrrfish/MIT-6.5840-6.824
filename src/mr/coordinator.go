@@ -80,6 +80,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c.reduces.cond = *sync.NewCond(&c.reduces.mu)
 	// Your code here.
 	mapTaskNum := len(files)
+	fmt.Println("splits number: ", mapTaskNum)
 
 	c.maps.mu.Lock()
 	defer c.maps.mu.Unlock()
@@ -112,68 +113,38 @@ func (c *Coordinator) GetMapTask(args *GetMapTaskArgs, reply *GetMapTaskReply) e
 
 	for {
 		c.maps.mu.Lock()
-		defer c.maps.mu.Unlock()
-		// fmt.Println("[test]Coordinator rpc: GetMapTask()")
-		if c.maps.sumJob > c.maps.doneJob+len(c.maps.exeJobChan) {
 
-			fmt.Println("[test]map doneJob: ", c.maps.doneJob)
-
-			var taskNumber int
-			// fmt.Println("[test]c.maps.available len: ", len(c.maps.available))
-			for i, v := range c.maps.available {
-				// fmt.Println("[available]get in for loop, i = ", i, " v = ", v)
-				if v {
-					fmt.Println("[test]get a map Task: ", i)
-					c.maps.available[i] = false
-					taskNumber = i
-					break
-				}
-			}
-			//fmt.Println("[test]c.maps.available is ok! get a Task: ", taskNumber)
-			reply.Number = taskNumber
-			reply.FileName = c.maps.filename[taskNumber]
-			reply.MapOver = false
-			c.maps.exeJobChan[taskNumber] = make(chan bool)
-
-			go c.waitWorkerDone(taskNumber)
-			break
-		} else if c.maps.sumJob == c.maps.doneJob {
-			fmt.Println("[!!!]all map tasks are done!")
+		if c.maps.sumJob == c.maps.doneJob {
+			fmt.Println("[!]map stage is over!")
 			reply.MapOver = true
 			c.maps.cond.Broadcast()
-			break
-		} else {
-			c.maps.cond.Wait()
-
-			// if c.maps.sumJob == c.maps.doneJob {
-			// 	fmt.Println("[!!!]all map tasks are done!")
-			// 	reply.MapOver = true
-			// 	c.maps.cond.Broadcast()
-			// 	break
-			// }
+			c.maps.mu.Unlock()
+			return nil
 		}
+
+		for i, v := range c.maps.available {
+			if v {
+				c.maps.available[i] = false
+				reply.Number = i
+				reply.FileName = c.maps.filename[i]
+				reply.MapOver = false
+				c.maps.exeJobChan[i] = make(chan bool)
+
+				go c.waitWorkerDone(i)
+
+				c.maps.mu.Unlock()
+				return nil
+			}
+		}
+
+		c.maps.cond.Wait()
+		c.maps.mu.Unlock()
 	}
-
-	return nil
 }
-
-// // return map task number
-// func (c *Coordinator) allocateMapTask() int {
-// 	// c.maps.mu.Lock()
-// 	// defer c.maps.mu.Unlock()
-
-// 	for i, v := range c.maps.available {
-// 		if v {
-// 			return i
-// 		}
-// 	}
-
-// 	return -1
-// }
 
 // wait worker until it's job is done, and listening worker's heart beat
 func (c *Coordinator) waitWorkerDone(taskNumber int) {
-	fmt.Println("[test]waitWorkerDone goroutine starts")
+	// fmt.Println("[test]waitWorkerDone goroutine starts")
 	c.maps.mu.Lock()
 	waitJobDone := c.maps.exeJobChan[taskNumber]
 	c.maps.mu.Unlock()
@@ -184,8 +155,6 @@ func (c *Coordinator) waitWorkerDone(taskNumber int) {
 			c.maps.mu.Lock()
 			defer c.maps.mu.Unlock()
 			delete(c.maps.exeJobChan, taskNumber)
-			// c.maps.doneJob++
-			fmt.Println("[test]waitWorkerDone() c.maps.doneJob: ", c.maps.doneJob)
 			return
 		case <-timeout:
 			c.maps.mu.Lock()
@@ -203,12 +172,10 @@ func (c *Coordinator) waitWorkerDone(taskNumber int) {
 func (c *Coordinator) MapJobDone(taskNumber *TaskNumber, reply *MapJobDoneReply) error {
 	c.maps.mu.Lock()
 	defer c.maps.mu.Unlock()
-	// fmt.Println("[test]Coordinator rpc, get a map done signal, from taskNumber: ", *taskNumber)
+
 	value, ok := c.maps.exeJobChan[int(*taskNumber)]
 	if ok { // worker may be considered as dead
-		// fmt.Println("[test]pass signal to chan")
 		c.maps.doneJob++
-		fmt.Println("[test]map doneJob: ", c.maps.doneJob)
 		value <- true
 	}
 	return nil

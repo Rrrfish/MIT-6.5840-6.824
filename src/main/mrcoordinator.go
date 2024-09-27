@@ -24,7 +24,6 @@ func main() {
 	}
 
 	m := mr.MakeCoordinator(os.Args[1:], 10)
-	fmt.Println("Make Coordinator!")
 	for m.Done() == false {
 		time.Sleep(time.Second)
 	}
