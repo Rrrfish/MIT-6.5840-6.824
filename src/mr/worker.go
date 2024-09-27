@@ -9,6 +9,7 @@ import (
 	"net/rpc"
 	"os"
 	"sort"
+	"strconv"
 )
 
 // Map functions return a slice of KeyValue.
@@ -43,38 +44,44 @@ func Worker(mapf func(string, string) []KeyValue,
 	// CallExample()
 
 	// Map task
-	go func() {
-		for {
 
-			getMapTaskArgs := GetMapTaskArgs{}
-			getMapTaskReply := GetMapTaskReply{}
-			err := call("Coordinator.GetMapTask", getMapTaskArgs, &getMapTaskReply)
-			if err {
-				log.Fatal("fetching task err: ", err)
-			}
-			if getMapTaskReply.mapOver {
-				break
-			} else {
-				filename := getMapTaskReply.fileName
-				taskNumber := getMapTaskReply.number
-
-				file, e := os.Open(filename)
-				if e != nil {
-					log.Fatalf("cannot open %v", filename)
-				}
-				content, e := io.ReadAll(file)
-				if e != nil {
-					log.Fatalf("cannot read %v", filename)
-				}
-				file.Close()
-				kva := mapf(filename, string(content))
-
-				sortAndCombine(kva)
-
-				wirteIntermediate(kva, string(taskNumber))
-			}
+	// fmt.Println("[test]Worker() starts!")
+	// go func() {
+	// fmt.Println("[test]map goroutine starts!")
+	for {
+		getMapTaskArgs := GetMapTaskArgs{}
+		getMapTaskReply := GetMapTaskReply{}
+		err := call("Coordinator.GetMapTask", getMapTaskArgs, &getMapTaskReply)
+		if !err {
+			log.Fatal("fetching task err: ", err)
 		}
-	}()
+		if getMapTaskReply.MapOver {
+			fmt.Println("[the map stage is over]")
+			return
+			// break
+		} else {
+			filename := getMapTaskReply.FileName
+			taskNumber := getMapTaskReply.Number
+			// fmt.Println("[test]worker gets a map task! filename: ", filename)
+
+			file, e := os.Open(filename)
+			if e != nil {
+				log.Fatalf("cannot open %v", filename)
+			}
+			content, e := io.ReadAll(file)
+			if e != nil {
+				log.Fatalf("cannot read %v", filename)
+			}
+			file.Close()
+			kva := mapf(filename, string(content))
+
+			kva = sortAndCombine(kva)
+
+			wirteIntermediate(kva, taskNumber)
+			mapTaskDone(taskNumber)
+		}
+	}
+	// }()
 
 	// Reduce task
 	// TODO
@@ -92,6 +99,7 @@ func Worker(mapf func(string, string) []KeyValue,
 func sortAndCombine(intermediate []KeyValue) []KeyValue {
 	sort.Sort(ByKey(intermediate))
 	ret := []KeyValue{}
+	// fmt.Println("[test]before sorting and combination, intermediate len: ", len(intermediate))
 
 	i := 0
 	for i < len(intermediate) {
@@ -100,23 +108,44 @@ func sortAndCombine(intermediate []KeyValue) []KeyValue {
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
-		ret = append(ret, KeyValue{Key: key, Value: string(j - i)})
+		ret = append(ret, KeyValue{Key: key, Value: strconv.Itoa(j - i)})
 		i = j
 	}
+	// fmt.Println("[test]after sorting and combination, intermediate len: ", len(ret))
 
 	return ret
 }
 
 // wirte intermediate output of map task
-func wirteIntermediate(intermediate []KeyValue, taskName string) error {
+func wirteIntermediate(intermediate []KeyValue, taskNumber int) error {
+	taskNumberString := strconv.Itoa(taskNumber)
+	// fmt.Println("[test] writeIntermediate(): taskNumber: ", taskNumberString)
+
 	for _, kv := range intermediate {
-		oname := "mr-" + taskName + string(ihash(kv.Key))
-		ofile, _ := os.OpenFile(oname, os.O_WRONLY|os.O_CREATE, 0644)
+		oname := "intermediateFile/mr-" + taskNumberString + "-" + strconv.Itoa(ihash(kv.Key))
+		//fmt.Println("[test]intermediate filename: ", oname)
+		ofile, err := os.OpenFile(oname, os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			log.Fatalf("cannot open file %v: %v", oname, err)
+			return err
+		}
+		defer ofile.Close()
+
 		enc := json.NewEncoder(ofile)
-		enc.Encode(&kv)
+		if err := enc.Encode(&kv); err != nil {
+			log.Fatalf("cannot encode kv: %v", err)
+			return err
+		}
 	}
 
 	return nil
+}
+
+// give coordinator a signal that map task has done
+func mapTaskDone(taskNumber int) {
+	reply := MapJobDoneReply{}
+
+	call("Coordinator.MapJobDone", taskNumber, &reply)
 }
 
 // example function to show how to make an RPC call to the coordinator.

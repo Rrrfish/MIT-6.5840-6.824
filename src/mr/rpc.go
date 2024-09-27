@@ -30,12 +30,12 @@ type GetMapTaskArgs struct {
 }
 
 type GetMapTaskReply struct {
-	number   int // task number
-	fileName string
-	mapOver  bool
+	Number   int // task number
+	FileName string
+	MapOver  bool
 }
 
-type taskNumber int
+type TaskNumber int
 
 type MapJobDoneReply struct {
 }
@@ -44,7 +44,7 @@ type GetReduceTaskArgs struct {
 }
 
 type GetReduceTaskReply struct {
-	number int // task number
+	Number int // task number
 }
 
 // Cook up a unique-ish UNIX-domain socket name

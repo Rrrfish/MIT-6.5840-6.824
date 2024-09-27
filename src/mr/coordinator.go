@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -63,6 +64,7 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	ret := false
+	// ret := true
 
 	// Your code here.
 
@@ -83,12 +85,23 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	defer c.maps.mu.Unlock()
 	c.maps.sumJob = mapTaskNum
 	c.maps.exeJobChan = make(map[int]chan bool)
+	c.maps.doneJob = 0
+	c.maps.available = make([]bool, mapTaskNum)
+	for i := range c.maps.available {
+		c.maps.available[i] = true
+	}
+	c.maps.filename = make([]string, mapTaskNum)
 	copy(c.maps.filename, files)
 
 	c.reduces.mu.Lock()
 	defer c.reduces.mu.Unlock()
 	c.reduces.sumJob = nReduce
 	c.reduces.exeJobChan = make(map[int]chan bool)
+	c.reduces.available = make([]bool, nReduce)
+	for i := range c.reduces.available {
+		c.reduces.available[i] = true
+	}
+	c.reduces.doneJob = 0
 
 	c.server()
 	return &c
@@ -96,31 +109,48 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 // allocate map job for workers
 func (c *Coordinator) GetMapTask(args *GetMapTaskArgs, reply *GetMapTaskReply) error {
-	c.maps.mu.Lock()
 
 	for {
+		c.maps.mu.Lock()
+		defer c.maps.mu.Unlock()
+		// fmt.Println("[test]Coordinator rpc: GetMapTask()")
 		if c.maps.sumJob > c.maps.doneJob+len(c.maps.exeJobChan) {
+
+			fmt.Println("[test]map doneJob: ", c.maps.doneJob)
+
 			var taskNumber int
+			// fmt.Println("[test]c.maps.available len: ", len(c.maps.available))
 			for i, v := range c.maps.available {
+				// fmt.Println("[available]get in for loop, i = ", i, " v = ", v)
 				if v {
+					fmt.Println("[test]get a map Task: ", i)
+					c.maps.available[i] = false
 					taskNumber = i
+					break
 				}
 			}
-			reply.number = taskNumber
-			reply.fileName = c.maps.filename[taskNumber]
-			reply.mapOver = false
-			c.maps.mu.Unlock()
+			//fmt.Println("[test]c.maps.available is ok! get a Task: ", taskNumber)
+			reply.Number = taskNumber
+			reply.FileName = c.maps.filename[taskNumber]
+			reply.MapOver = false
+			c.maps.exeJobChan[taskNumber] = make(chan bool)
 
 			go c.waitWorkerDone(taskNumber)
+			break
+		} else if c.maps.sumJob == c.maps.doneJob {
+			fmt.Println("[!!!]all map tasks are done!")
+			reply.MapOver = true
+			c.maps.cond.Broadcast()
 			break
 		} else {
 			c.maps.cond.Wait()
 
-			if c.maps.sumJob == c.maps.doneJob {
-				reply.mapOver = true
-				c.maps.cond.Broadcast()
-				break
-			}
+			// if c.maps.sumJob == c.maps.doneJob {
+			// 	fmt.Println("[!!!]all map tasks are done!")
+			// 	reply.MapOver = true
+			// 	c.maps.cond.Broadcast()
+			// 	break
+			// }
 		}
 	}
 
@@ -143,6 +173,7 @@ func (c *Coordinator) GetMapTask(args *GetMapTaskArgs, reply *GetMapTaskReply) e
 
 // wait worker until it's job is done, and listening worker's heart beat
 func (c *Coordinator) waitWorkerDone(taskNumber int) {
+	fmt.Println("[test]waitWorkerDone goroutine starts")
 	c.maps.mu.Lock()
 	waitJobDone := c.maps.exeJobChan[taskNumber]
 	c.maps.mu.Unlock()
@@ -153,12 +184,14 @@ func (c *Coordinator) waitWorkerDone(taskNumber int) {
 			c.maps.mu.Lock()
 			defer c.maps.mu.Unlock()
 			delete(c.maps.exeJobChan, taskNumber)
-			c.maps.doneJob++
-			c.maps.available[taskNumber] = false
+			// c.maps.doneJob++
+			fmt.Println("[test]waitWorkerDone() c.maps.doneJob: ", c.maps.doneJob)
 			return
 		case <-timeout:
 			c.maps.mu.Lock()
 			defer c.maps.mu.Unlock()
+			fmt.Println("[worker dies]taskNumber: ", taskNumber)
+			c.maps.available[taskNumber] = true
 			delete(c.maps.exeJobChan, taskNumber)
 			c.maps.cond.Signal() // signal a waiting worker for Map task
 			return
@@ -167,9 +200,16 @@ func (c *Coordinator) waitWorkerDone(taskNumber int) {
 }
 
 // worker use this to notify coordinator work done
-func (c *Coordinator) MapJobDone(taskNumber *taskNumber, reply *MapJobDoneReply) error {
+func (c *Coordinator) MapJobDone(taskNumber *TaskNumber, reply *MapJobDoneReply) error {
 	c.maps.mu.Lock()
 	defer c.maps.mu.Unlock()
-	c.maps.exeJobChan[int(*taskNumber)] <- true
+	// fmt.Println("[test]Coordinator rpc, get a map done signal, from taskNumber: ", *taskNumber)
+	value, ok := c.maps.exeJobChan[int(*taskNumber)]
+	if ok { // worker may be considered as dead
+		// fmt.Println("[test]pass signal to chan")
+		c.maps.doneJob++
+		fmt.Println("[test]map doneJob: ", c.maps.doneJob)
+		value <- true
+	}
 	return nil
 }
