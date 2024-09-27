@@ -33,6 +33,7 @@ type GetMapTaskReply struct {
 	Number   int // task number
 	FileName string
 	MapOver  bool
+	NReduce  int
 }
 
 type TaskNumber int

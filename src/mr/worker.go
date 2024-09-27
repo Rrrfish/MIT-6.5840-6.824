@@ -57,12 +57,11 @@ func Worker(mapf func(string, string) []KeyValue,
 		}
 		if getMapTaskReply.MapOver {
 			fmt.Println("[the map stage is over]")
-			return
 			// break
+			return
 		} else {
 			filename := getMapTaskReply.FileName
 			taskNumber := getMapTaskReply.Number
-			// fmt.Println("[test]worker gets a map task! filename: ", filename)
 
 			file, e := os.Open(filename)
 			if e != nil {
@@ -77,15 +76,17 @@ func Worker(mapf func(string, string) []KeyValue,
 
 			kva = sortAndCombine(kva)
 
-			wirteIntermediate(kva, taskNumber)
+			wirteIntermediate(kva, taskNumber, getMapTaskReply.NReduce)
 			mapTaskDone(taskNumber)
 		}
 	}
 	// }()
 
 	// Reduce task
-	// TODO
+
 	// go func() {
+	// 	GetReduceTaskArgs := GetReduceTaskArgs{}
+	// 	GetReduceTaskReply := GetReduceTaskReply{}
 
 	// }()
 
@@ -117,12 +118,12 @@ func sortAndCombine(intermediate []KeyValue) []KeyValue {
 }
 
 // wirte intermediate output of map task
-func wirteIntermediate(intermediate []KeyValue, taskNumber int) error {
+func wirteIntermediate(intermediate []KeyValue, taskNumber int, nReduce int) error {
 	taskNumberString := strconv.Itoa(taskNumber)
 	// fmt.Println("[test] writeIntermediate(): taskNumber: ", taskNumberString)
 
 	for _, kv := range intermediate {
-		oname := "intermediateFile/mr-" + taskNumberString + "-" + strconv.Itoa(ihash(kv.Key))
+		oname := "intermediateFile/mr-" + taskNumberString + "-" + strconv.Itoa(ihash(kv.Key)%nReduce)
 		//fmt.Println("[test]intermediate filename: ", oname)
 		ofile, err := os.OpenFile(oname, os.O_WRONLY|os.O_CREATE, 0644)
 		if err != nil {

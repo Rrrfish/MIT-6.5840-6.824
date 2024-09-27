@@ -108,6 +108,10 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	return &c
 }
 
+//
+// Map stage
+//
+
 // allocate map job for workers
 func (c *Coordinator) GetMapTask(args *GetMapTaskArgs, reply *GetMapTaskReply) error {
 
@@ -126,6 +130,7 @@ func (c *Coordinator) GetMapTask(args *GetMapTaskArgs, reply *GetMapTaskReply) e
 			if v {
 				c.maps.available[i] = false
 				reply.Number = i
+				reply.NReduce = c.reduces.sumJob
 				reply.FileName = c.maps.filename[i]
 				reply.MapOver = false
 				c.maps.exeJobChan[i] = make(chan bool)
