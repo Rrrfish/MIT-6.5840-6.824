@@ -8,8 +8,11 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 )
 
 // Map functions return a slice of KeyValue.
@@ -37,109 +40,117 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
-
+	var wg sync.WaitGroup
 	// Your worker implementation here.
 
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
-	// Map task
-
-	// fmt.Println("[test]Worker() starts!")
-	// go func() {
-	// fmt.Println("[test]map goroutine starts!")
-	for {
-		getMapTaskArgs := GetMapTaskArgs{}
-		getMapTaskReply := GetMapTaskReply{}
-		err := call("Coordinator.GetMapTask", getMapTaskArgs, &getMapTaskReply)
-		if !err {
-			log.Fatal("fetching task err: ", err)
-		}
-		if getMapTaskReply.MapOver {
-			fmt.Println("[the map stage is over]")
-			// break
-			return
-		} else {
-			filename := getMapTaskReply.FileName
-			taskNumber := getMapTaskReply.Number
-
-			file, e := os.Open(filename)
-			if e != nil {
-				log.Fatalf("cannot open %v", filename)
-			}
-			content, e := io.ReadAll(file)
-			if e != nil {
-				log.Fatalf("cannot read %v", filename)
-			}
-			file.Close()
-			kva := mapf(filename, string(content))
-
-			kva = sortAndCombine(kva)
-
-			wirteIntermediate(kva, taskNumber, getMapTaskReply.NReduce)
-			mapTaskDone(taskNumber)
-		}
-	}
-	// }()
-
 	// Reduce task
 
-	// go func() {
-	// 	GetReduceTaskArgs := GetReduceTaskArgs{}
-	// 	GetReduceTaskReply := GetReduceTaskReply{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			getReduceTaskArgs := GetReduceTaskArgs{}
+			getReduceTaskReply := GetReduceTaskReply{}
 
+			err := call("Coordinator.GetReduceTask", getReduceTaskArgs, &getReduceTaskReply)
+			if !err {
+				log.Fatal("fetching task err: ", err)
+			}
+
+			if getReduceTaskReply.ReduceOver {
+				// fmt.Println("[reducer]receive over signal!")
+				return
+			}
+
+			taskNumber := getReduceTaskReply.Number
+
+			// fmt.Println("[reduce] reduce stage starts! taskNumber: ", taskNumber)
+			kva := readIntermediateFiles(taskNumber)
+			combineAndWrite(taskNumber, kva, reducef)
+
+			reduceTaskDone(taskNumber)
+		}
+
+	}()
+
+	// Map task
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			getMapTaskArgs := GetMapTaskArgs{}
+			getMapTaskReply := GetMapTaskReply{}
+			err := call("Coordinator.GetMapTask", getMapTaskArgs, &getMapTaskReply)
+			if !err {
+				log.Fatal("fetching task err: ", err)
+			}
+			if getMapTaskReply.MapOver {
+				// fmt.Println("[the map stage is over]")
+				break
+				// return
+			} else {
+				filename := getMapTaskReply.FileName
+				taskNumber := getMapTaskReply.Number
+
+				file, e := os.Open(filename)
+				if e != nil {
+					log.Fatalf("cannot open %v", filename)
+				}
+				content, e := io.ReadAll(file)
+				if e != nil {
+					log.Fatalf("cannot read %v", filename)
+				}
+				file.Close()
+				kva := mapf(filename, string(content))
+
+				sortAndWrite(kva, taskNumber, getMapTaskReply.NReduce)
+
+				// wirteIntermediate(kva, taskNumber, getMapTaskReply.NReduce)
+				mapTaskDone(taskNumber)
+			}
+		}
+	}()
 	// }()
-
+	wg.Wait()
 }
 
 //
 // map task
 //
 
-// sort and combine
-func sortAndCombine(intermediate []KeyValue) []KeyValue {
+// sort and write
+func sortAndWrite(intermediate []KeyValue, taskNumber int, nReduce int) {
+	taskNumberString := strconv.Itoa(taskNumber)
+
 	sort.Sort(ByKey(intermediate))
-	ret := []KeyValue{}
+	// ret := []KeyValue{}
 	// fmt.Println("[test]before sorting and combination, intermediate len: ", len(intermediate))
 
 	i := 0
 	for i < len(intermediate) {
-		j := i + 1
+		j := i
 		key := intermediate[i].Key
-		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
-			j++
-		}
-		ret = append(ret, KeyValue{Key: key, Value: strconv.Itoa(j - i)})
-		i = j
-	}
-	// fmt.Println("[test]after sorting and combination, intermediate len: ", len(ret))
-
-	return ret
-}
-
-// wirte intermediate output of map task
-func wirteIntermediate(intermediate []KeyValue, taskNumber int, nReduce int) error {
-	taskNumberString := strconv.Itoa(taskNumber)
-	// fmt.Println("[test] writeIntermediate(): taskNumber: ", taskNumberString)
-
-	for _, kv := range intermediate {
-		oname := "intermediateFile/mr-" + taskNumberString + "-" + strconv.Itoa(ihash(kv.Key)%nReduce)
-		//fmt.Println("[test]intermediate filename: ", oname)
-		ofile, err := os.OpenFile(oname, os.O_WRONLY|os.O_CREATE, 0644)
+		// oname := "intermediateFile/mr-" + taskNumberString + "-" + strconv.Itoa(ihash(key)%nReduce)
+		oname := "./mr-" + taskNumberString + "-" + strconv.Itoa(ihash(key)%nReduce)
+		ofile, err := os.OpenFile(oname, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
 		if err != nil {
 			log.Fatalf("cannot open file %v: %v", oname, err)
-			return err
 		}
 		defer ofile.Close()
 
-		enc := json.NewEncoder(ofile)
-		if err := enc.Encode(&kv); err != nil {
-			log.Fatalf("cannot encode kv: %v", err)
-			return err
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			enc := json.NewEncoder(ofile)
+			if err := enc.Encode(&intermediate[j]); err != nil {
+				log.Fatalf("cannot encode kv: %v", err)
+			}
+			j++
 		}
+		i = j
 	}
 
-	return nil
 }
 
 // give coordinator a signal that map task has done
@@ -147,6 +158,96 @@ func mapTaskDone(taskNumber int) {
 	reply := MapJobDoneReply{}
 
 	call("Coordinator.MapJobDone", taskNumber, &reply)
+}
+
+//
+// Reduce
+//
+
+// read corresponding intermediate files
+func readIntermediateFiles(taskNumber int) []KeyValue {
+	kva := []KeyValue{}
+	// dir := "./intermediateFile"
+	dir := "./"
+
+	// 读取目录下的所有文件
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		log.Fatalf("无法读取目录: %v", err)
+	}
+	// taskName := fmt.Sprintf("mr-*- %d", taskNumber)
+
+	for _, file := range files {
+		// fmt.Println("[reduce]go into files range")
+		// 检查文件是否匹配模式
+		// if strings.Contains(file.Name(), taskName) {
+		if strings.HasPrefix(file.Name(), "mr-") && strings.HasSuffix(file.Name(), fmt.Sprintf("-%d", taskNumber)) {
+			filePath := filepath.Join(dir, file.Name())
+			// fmt.Println("find file:", filePath)
+
+			// 这里可以添加打开文件的逻辑
+			// 例如，使用 os.Open(filePath) 打开文件
+			file, err := os.Open(filePath)
+			if err != nil {
+				log.Fatal("can not open file.")
+			}
+			dec := json.NewDecoder(file)
+			for {
+				var kv KeyValue
+				if err := dec.Decode(&kv); err != nil {
+					break
+				}
+				kva = append(kva, kv)
+			}
+		}
+	}
+
+	return kva
+}
+
+// reducer combines data and writes output
+func combineAndWrite(taskNumber int, intermediate []KeyValue, reducef func(string, []string) string) {
+	sort.Sort(ByKey(intermediate))
+	i := 0
+	ofile, err := os.CreateTemp("./", "example-")
+	if err != nil {
+		log.Fatal(err)
+	}
+	// fmt.Println("temp file name: ", ofile.Name())
+	defer os.Remove(ofile.Name())
+
+	for i < len(intermediate) {
+		// fmt.Println("writing on temp file!")
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	// oname := "intermediateFile/mr-out-" + strconv.Itoa(taskNumber)
+	oname := "mr-out-" + strconv.Itoa(taskNumber)
+	if err := os.Rename(ofile.Name(), oname); err != nil {
+		log.Fatal("rename error: ", err)
+	}
+}
+
+// give coordinator a signal that reduce task has done
+func reduceTaskDone(taskNumber int) {
+	reply := ReduceJobDoneReply{}
+
+	// fmt.Println("[reduce]send a done signal")
+
+	call("Coordinator.ReduceJobDone", taskNumber, &reply)
 }
 
 // example function to show how to make an RPC call to the coordinator.

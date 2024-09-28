@@ -45,7 +45,11 @@ type GetReduceTaskArgs struct {
 }
 
 type GetReduceTaskReply struct {
-	Number int // task number
+	Number     int // task number
+	ReduceOver bool
+}
+
+type ReduceJobDoneReply struct {
 }
 
 // Cook up a unique-ish UNIX-domain socket name
