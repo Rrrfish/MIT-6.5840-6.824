@@ -10,6 +10,7 @@ import (
 type Clerk struct {
 	server *labrpc.ClientEnd
 	// You will have to modify this struct.
+	id int64
 }
 
 func nrand() int64 {
@@ -23,6 +24,7 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
 	// You'll have to add code here.
+	ck.id = nrand()
 	return ck
 }
 
@@ -37,24 +39,13 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{}
+	args := GetArgs{key, ck.id, nrand()}
 	reply := GetReply{}
-	args.Key = key
-	args.Id = nrand()
-	// timeout := time.After(100 * time.Millisecond)
-	// c := make(chan bool)
-	// go func() {
-	// 	c <- ck.server.Call("KVServer.Get", &args, &reply)
-	// }()
-	// for {
-	// 	select {
-	// 	case <-c:
-	// 		return reply.Value
-	// 	case <-timeout:
-	// 		return ""
-	// 	}
-	// }
-	ck.server.Call("KVServer.Get", &args, &reply)
+	success := false
+	for !success {
+		success = ck.server.Call("KVServer.Get", &args, &reply)
+	}
+
 	return reply.Value
 
 	// You will have to modify this function.
@@ -70,22 +61,15 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
 	// You will have to modify this function.
-	args := PutAppendArgs{Key: key, Value: value, Id: nrand()}
+	args := PutAppendArgs{key, value, ck.id, nrand()}
 	reply := PutAppendReply{}
-	// timeout := time.After(100 * time.Millisecond)
-	// c := make(chan bool)
-	// go func() {
-	// 	c <- ck.server.Call("KVServer."+op, &args, &reply)
-	// }()
-	// for {
-	// 	select {
-	// 	case <-c:
-	// 		return reply.Value
-	// 	case <-timeout:
-	// 		return ""
-	// 	}
-	// }
-	ck.server.Call("KVServer."+op, &args, &reply)
+
+	success := false
+
+	for !success {
+		success = ck.server.Call("KVServer."+op, &args, &reply)
+	}
+
 	return reply.Value
 }
 

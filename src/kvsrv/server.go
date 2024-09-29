@@ -18,7 +18,13 @@ type KVServer struct {
 	mu sync.Mutex
 
 	// Your definitions here.
-	data map[string]string
+	data  map[string]string
+	cache map[int64]record
+}
+
+type record struct {
+	id    int64
+	value string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -27,11 +33,21 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	defer kv.mu.Unlock()
 
 	key := args.Key
+	// ci := args.ClientID
+	// ri := args.ReqID
+
+	// if v, ok := kv.cache[ci]; ok && v.id == ri {
+	// 	reply.Value = v.value
+	// 	return
+	// }
+
 	v, ok := kv.data[key]
 
 	if ok {
 		reply.Value = v
 	}
+	// kv.cache[ci] = record{ri, reply.Value}
+
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
@@ -40,7 +56,15 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 	defer kv.mu.Unlock()
 	key := args.Key
 	value := args.Value
+	ci := args.ClientID
+	ri := args.ReqID
+
+	if v, ok := kv.cache[ci]; ok && ri == v.id {
+		reply.Value = v.value
+		return
+	}
 	kv.data[key] = value
+	kv.cache[ci] = record{ri, reply.Value}
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
@@ -49,16 +73,22 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	defer kv.mu.Unlock()
 	key := args.Key
 	value := args.Value
+	ci := args.ClientID
+	ri := args.ReqID
+
+	if v, ok := kv.cache[ci]; ok && ri == v.id {
+		reply.Value = v.value
+		return
+	}
 
 	v, ok := kv.data[key]
 
-	if !ok {
-		reply.Value = ""
-	} else {
+	if ok {
 		reply.Value = v
 	}
 
 	kv.data[key] = reply.Value + value
+	kv.cache[ci] = record{ri, reply.Value}
 }
 
 func StartKVServer() *KVServer {
@@ -66,6 +96,6 @@ func StartKVServer() *KVServer {
 
 	// You may need initialization code here.
 	kv.data = make(map[string]string)
-
+	kv.cache = make(map[int64]record)
 	return kv
 }
